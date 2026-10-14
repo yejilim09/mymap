@@ -244,7 +244,7 @@
 
             <!-- 검색 진행 상황 -->
             <p id="status" role="status" aria-live="polite">
-                지도를 준비하고 있습니다.
+                현재 위치를 확인하고 있습니다.
             </p>
 
             <!-- 검색 결과 목록 -->
@@ -282,10 +282,8 @@
         // 현재 검색 요청 번호
         let searchRequestId = 0;
 
-        // 기본 위치는 서울시청으로 설정
-        // 현재 위치를 가져오지 못해도 지도를 표시할 수 있도록 함
-        const defaultLatitude = 37.5665;
-        const defaultLongitude = 126.9780;
+        // 현재 위치 확인 요청 번호
+        let locationRequestId = 0;
 
         // 지도 초기화
         function initializeMap() {
@@ -301,17 +299,15 @@
             // 카카오맵 로딩이 완료된 후 지도 생성
             kakao.maps.load(function () {
                 try {
-                    // 기본 지도 중심 설정
-                    const defaultPosition = new kakao.maps.LatLng(
-                        defaultLatitude,
-                        defaultLongitude
-                    );
+                    // 현재 위치를 아직 모르므로 임시 중심 좌표 설정
+                    // 현재 위치 확인에 성공하면 실제 위치로 이동
+                    const initialPosition = new kakao.maps.LatLng(0, 0);
 
                     // 지도 생성
                     map = new kakao.maps.Map(
                         document.getElementById("map"),
                         {
-                            center: defaultPosition,
+                            center: initialPosition,
                             level: 5
                         }
                     );
@@ -324,7 +320,7 @@
                         removable: true
                     });
 
-                    // 지도 생성 후 현재 위치 확인
+                    // 지도가 생성되면 현재 위치 확인
                     getCurrentLocation();
 
                 } catch (error) {
@@ -338,62 +334,86 @@
 
         // 현재 위치 확인
         function getCurrentLocation() {
-            if (!navigator.geolocation) {
+            if (!map) {
                 statusText.textContent =
-                    "현재 위치 기능을 지원하지 않는 브라우저입니다. 서울시청을 기준으로 장소를 검색합니다.";
-
-                // 현재 위치를 사용할 수 없으면 기본 위치 주변 검색
-                searchNearbyPlaces();
+                    "지도가 아직 준비되지 않았습니다.";
                 return;
             }
 
-            statusText.textContent = "현재 위치를 확인하고 있습니다.";
+            // 새 위치 확인 요청 번호 발급
+            locationRequestId++;
 
+            const requestId = locationRequestId;
+
+            // 현재 위치 확인 중임을 안내
+            statusText.textContent =
+                "현재 위치를 확인하고 있습니다.";
+
+            // 브라우저가 위치 정보를 지원하는지 확인
+            if (!navigator.geolocation) {
+                statusText.textContent =
+                    "이 브라우저에서는 현재 위치를 확인할 수 없습니다. 위치 기능을 지원하는 브라우저를 이용해 주세요.";
+                return;
+            }
+
+            // 브라우저에 현재 위치 권한 요청
             navigator.geolocation.getCurrentPosition(
                 function (position) {
+                    // 더 최근에 시작된 위치 요청이 있다면 이전 결과 무시
+                    if (requestId !== locationRequestId) {
+                        return;
+                    }
+
                     // 현재 위치의 위도와 경도 저장
                     currentLatitude = position.coords.latitude;
                     currentLongitude = position.coords.longitude;
 
-                    // 현재 위치 좌표 생성
+                    // 실제 현재 위치 좌표 생성
                     const currentPosition = new kakao.maps.LatLng(
                         currentLatitude,
                         currentLongitude
                     );
 
-                    // 현재 위치로 지도 중심 이동
+                    // 지도 중심을 실제 현재 위치로 이동
                     map.setCenter(currentPosition);
+                    map.setLevel(5);
 
-                    // 현재 위치 표시
+                    // 현재 위치 마커 표시
                     showCurrentLocation(currentPosition);
 
                     // 현재 위치 주변의 장소 검색
                     searchNearbyPlaces();
                 },
                 function (error) {
-                    // 위치 확인에 실패하면 서울시청을 기본 위치로 사용
+                    // 더 최근에 시작된 위치 요청이 있다면 이전 결과 무시
+                    if (requestId !== locationRequestId) {
+                        return;
+                    }
+
+                    // 현재 위치 확인 실패 안내
                     console.warn("현재 위치 확인 실패:", error.message);
 
-                    currentLatitude = defaultLatitude;
-                    currentLongitude = defaultLongitude;
+                    currentLatitude = null;
+                    currentLongitude = null;
 
-                    const defaultPosition = new kakao.maps.LatLng(
-                        defaultLatitude,
-                        defaultLongitude
-                    );
+                    clearSearchResults();
 
-                    map.setCenter(defaultPosition);
-
-                    statusText.textContent =
-                        "현재 위치를 확인하지 못했습니다. 서울시청 주변 장소를 표시합니다.";
-
-                    // 기본 위치 주변 장소 검색
-                    searchNearbyPlaces();
+                    if (error.code === error.PERMISSION_DENIED) {
+                        statusText.textContent =
+                            "현재 위치 권한이 거부되었습니다. 브라우저의 위치 권한을 허용한 뒤 다시 시도해 주세요.";
+                    } else if (error.code === error.TIMEOUT) {
+                        statusText.textContent =
+                            "현재 위치 확인 시간이 초과되었습니다. 위치 기능을 켜고 다시 시도해 주세요.";
+                    } else {
+                        statusText.textContent =
+                            "현재 위치를 확인할 수 없습니다. 기기의 위치 설정을 확인해 주세요.";
+                    }
                 },
                 {
+                    // 위치 확인 옵션
                     enableHighAccuracy: false,
-                    timeout: 10000,
-                    maximumAge: 60000
+                    timeout: 15000,
+                    maximumAge: 0
                 }
             );
         }
@@ -408,7 +428,8 @@
             // 현재 위치에 새 마커 생성
             currentLocationMarker = new kakao.maps.Marker({
                 map: map,
-                position: position
+                position: position,
+                title: "현재 위치"
             });
 
             // 현재 위치 마커를 클릭하면 안내 팝업 표시
@@ -433,32 +454,7 @@
 
         // 현재 위치 버튼 클릭
         locationButton.addEventListener("click", function () {
-            if (!map) {
-                statusText.textContent =
-                    "지도가 아직 준비되지 않았습니다.";
-                return;
-            }
-
-            // 현재 위치 정보가 이미 있다면 해당 위치로 이동
-            if (
-                currentLatitude !== null &&
-                currentLongitude !== null
-            ) {
-                const currentPosition = new kakao.maps.LatLng(
-                    currentLatitude,
-                    currentLongitude
-                );
-
-                map.setCenter(currentPosition);
-                map.setLevel(5);
-
-                statusText.textContent =
-                    "현재 위치로 이동했습니다.";
-
-                return;
-            }
-
-            // 현재 위치 정보가 없다면 다시 요청
+            // 현재 위치를 다시 확인
             getCurrentLocation();
         });
 
@@ -480,33 +476,49 @@
                 return;
             }
 
+            // 현재 위치를 확인하지 못했다면 위치 확인부터 진행
+            if (
+                currentLatitude === null ||
+                currentLongitude === null
+            ) {
+                selectedCategory = category;
+                updateTabDesign();
+                getCurrentLocation();
+                return;
+            }
+
             // 현재 선택한 카테고리 변경
             selectedCategory = category;
 
-            // 선택된 탭의 디자인 변경
+            // 탭 디자인 변경
+            updateTabDesign();
+
+            // 이전 검색 결과를 지우고 새 장소 검색
+            searchNearbyPlaces();
+        }
+
+        // 선택된 탭의 디자인 변경
+        function updateTabDesign() {
             bookstoreTab.classList.toggle(
                 "active",
-                category === "서점"
+                selectedCategory === "서점"
             );
 
             libraryTab.classList.toggle(
                 "active",
-                category === "도서관"
+                selectedCategory === "도서관"
             );
 
             // 접근성 정보를 현재 탭에 맞게 변경
             bookstoreTab.setAttribute(
                 "aria-pressed",
-                String(category === "서점")
+                String(selectedCategory === "서점")
             );
 
             libraryTab.setAttribute(
                 "aria-pressed",
-                String(category === "도서관")
+                String(selectedCategory === "도서관")
             );
-
-            // 이전 검색 결과를 지우고 새 장소 검색
-            searchNearbyPlaces();
         }
 
         // 이전 검색 결과의 마커와 목록 삭제
@@ -533,6 +545,16 @@
                 return;
             }
 
+            // 현재 위치가 없으면 검색하지 않음
+            if (
+                currentLatitude === null ||
+                currentLongitude === null
+            ) {
+                statusText.textContent =
+                    "현재 위치를 확인한 뒤 주변 장소를 검색할 수 있습니다.";
+                return;
+            }
+
             // 새로운 검색 요청 번호 발급
             searchRequestId++;
 
@@ -541,31 +563,20 @@
             // 이전 검색 결과 삭제
             clearSearchResults();
 
-            // 현재 위치가 없다면 기본 위치 사용
-            const latitude =
-                currentLatitude !== null
-                    ? currentLatitude
-                    : defaultLatitude;
-
-            const longitude =
-                currentLongitude !== null
-                    ? currentLongitude
-                    : defaultLongitude;
-
-            // 검색 중심 좌표 생성
+            // 현재 위치 좌표 생성
             const searchPosition = new kakao.maps.LatLng(
-                latitude,
-                longitude
+                currentLatitude,
+                currentLongitude
             );
 
-            // 현재 선택한 탭에 따라 검색어 설정
+            // 선택한 탭에 따라 검색어 설정
             const keyword =
                 selectedCategory === "서점"
                     ? "서점"
                     : "도서관";
 
             statusText.textContent =
-                "주변 " + keyword + "을(를) 검색하고 있습니다.";
+                "현재 위치 주변의 " + keyword + "을(를) 검색하고 있습니다.";
 
             // 현재 위치 주변에서 장소 검색
             placesService.keywordSearch(
@@ -582,8 +593,8 @@
                         kakao.maps.services.Status.ZERO_RESULT
                     ) {
                         statusText.textContent =
-                            "주변에 검색된 " + keyword + "이(가) 없습니다.";
-
+                            "현재 위치 주변에 검색된 " +
+                            keyword + "이(가) 없습니다.";
                         return;
                     }
 
@@ -594,22 +605,21 @@
                     ) {
                         statusText.textContent =
                             "검색에 실패했습니다. 잠시 후 다시 시도해 주세요.";
-
                         return;
                     }
 
-                    // 검색 결과를 현재 위치와 가까운 순서로 정렬
+                    // 현재 위치와 가까운 순서로 정렬
                     data.sort(function (a, b) {
                         const distanceA = getDistance(
-                            latitude,
-                            longitude,
+                            currentLatitude,
+                            currentLongitude,
                             Number(a.y),
                             Number(a.x)
                         );
 
                         const distanceB = getDistance(
-                            latitude,
-                            longitude,
+                            currentLatitude,
+                            currentLongitude,
                             Number(b.y),
                             Number(b.x)
                         );
@@ -638,7 +648,7 @@
                     // 검색 결과를 최대 15개까지 표시
                     size: 15,
 
-                    // 현재 위치와 가까운 장소부터 검색
+                    // 가까운 장소부터 검색
                     sort: kakao.maps.services.SortBy.DISTANCE
                 }
             );
@@ -795,10 +805,10 @@
                 content.appendChild(link);
             }
 
-            // 기존 팝업 내용을 선택한 장소 정보로 변경
+            // 팝업 내용을 선택한 장소 정보로 변경
             infoWindow.setContent(content);
 
-            // 해당 장소의 마커 찾기
+            // 선택한 장소의 마커 찾기
             const selectedMarker = placeMarkers.find(function (marker) {
                 const markerPosition = marker.getPosition();
 
